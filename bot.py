@@ -1155,7 +1155,25 @@ def confirm_purchase_with_form(call):
     user_id = call.from_user.id
     
     process_final_purchase(user_id, product_id, call.message.chat.id, call.message.message_id, call.id)
+@bot.message_handler(func=lambda message: True)
+def message_router(message):
+    """مدیریت پیام‌های متنی بر اساس وضعیت (State) کاربر"""
+    user_id = message.from_user.id
+    state = get_state(user_id)
+    
+    if not state:
+        return
 
+    # مدیریت پرداخت زیبال (مبلغ دلخواه)
+    if state == "payment_zibal_waiting_amount":
+        handle_payment_zibal_states(bot, db, message, user_id, state, user_data)
+        return
+
+    # مدیریت فرم‌های خرید (اگر دارید)
+    if state.startswith("waiting_form_answer_"):
+        # اگر هندلر مربوط به فرم در فایل دیگری است آن را صدا بزنید
+        # account_maker_handlers.handle_state(...) 
+        pass
 # اجرای ربات
 if __name__ == "__main__":
     try:
@@ -1176,27 +1194,8 @@ if __name__ == "__main__":
         logger.error(f"❌ خطا در اجرای ربات: {e}")
 
 
-# این قسمت را به انتهای فایل bot.py اضافه کنید
 
-@bot.message_handler(func=lambda message: True)
-def message_router(message):
-    """مدیریت پیام‌های متنی بر اساس وضعیت (State) کاربر"""
-    user_id = message.from_user.id
-    state = get_state(user_id)
-    
-    if not state:
-        return
 
-    # مدیریت پرداخت زیبال (مبلغ دلخواه)
-    if state == "payment_zibal_waiting_amount":
-        handle_payment_zibal_states(bot, db, message, user_id, state, user_data)
-        return
-
-    # مدیریت فرم‌های خرید (اگر دارید)
-    if state.startswith("waiting_form_answer_"):
-        # اگر هندلر مربوط به فرم در فایل دیگری است آن را صدا بزنید
-        # account_maker_handlers.handle_state(...) 
-        pass
 
 
 
