@@ -1157,15 +1157,24 @@ def confirm_purchase_with_form(call):
     process_final_purchase(user_id, product_id, call.message.chat.id, call.message.message_id, call.id)
 
 # اجرای ربات
-logger.info("="*60)
-logger.info("🚀 ربات فروش اکانت در حال اجرا...")
-logger.info("🔐 پروکسی فعال است")
-logger.info("="*60)
+if __name__ == "__main__":
+    try:
+        # شروع وب‌سرور برای health check
+        web_thread = threading.Thread(target=run_web_server, daemon=True)
+        web_thread.start()
+        logger.info("✅ Health check server started on port 8000")
+        
+        logger.info("="*60)
+        logger.info("🚀 ربات فروش اکانت در حال اجرا...")
+        logger.info("🔐 پروکسی فعال است")
+        logger.info("="*60)
+        
+        bot.infinity_polling(timeout=60, long_polling_timeout=60)
+    except KeyboardInterrupt:
+        logger.info("ربات متوقف شد")
+    except Exception as e:
+        logger.error(f"❌ خطا در اجرای ربات: {e}")
 
-try:
-    bot.infinity_polling(timeout=60, long_polling_timeout=60)
-except Exception as e:
-    logger.error(f"❌ خطا در اجرای ربات: {e}")
 
 # این قسمت را به انتهای فایل bot.py اضافه کنید
 
@@ -1188,5 +1197,6 @@ def message_router(message):
         # اگر هندلر مربوط به فرم در فایل دیگری است آن را صدا بزنید
         # account_maker_handlers.handle_state(...) 
         pass
+
 
 
