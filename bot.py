@@ -1145,6 +1145,237 @@ def handle_messages(message):
             reply_markup=markup
         )
         clear_state(user_id)
+# ===== Handler برای تمام پیام‌های متنی =====
+@bot.message_handler(func=lambda message: True)
+def message_router(message):
+    """مدیریت پیام‌های متنی بر اساس وضعیت (State) کاربر"""
+    user_id = message.from_user.id
+    state = get_state(user_id)
+    
+    if not state:
+        return
+    
+    # مدیریت Account Maker states
+    if handle_account_maker_states(bot, db, message, user_id, state, user_data):
+        return
+    
+    # مدیریت Help states
+    if handle_help_states(bot, db, message, user_id, state, user_data):
+        return
+    
+    # مدیریت Payment Zibal states
+    if handle_payment_zibal_states(bot, db, message, user_id, state, user_data):
+        return
+    
+    # مدیریت Payment Digital states
+    if handle_payment_digital_states(bot, db, message, user_id, state, user_data):
+        return
+    
+    # مدیریت Payment Admin states
+    if handle_payment_admin_states(bot, db, message, user_id, state, user_data):
+        return
+    
+    # مدیریت افزودن محصول
+    if state == "waiting_site_name":
+        try:
+            site_name = message.text.strip()
+            if not site_name:
+                bot.send_message(message.chat.id, "❌ نام سایت نمی‌تواند خالی باشد!")
+                return
+            
+            user_data[user_id] = {'site_name': site_name}
+            set_state(user_id, "waiting_description")
+            bot.send_message(message.chat.id, "📝 توضیحات محصول را وارد کنید:")
+        except Exception as e:
+            logger.error(f"Error in waiting_site_name: {e}")
+            bot.send_message(message.chat.id, "❌ خطا در ثبت نام سایت!")
+        return
+    
+    elif state == "waiting_description":
+        try:
+            data = user_data[user_id]
+            data['description'] = message.text.strip()
+            set_state(user_id, "waiting_price")
+            bot.send_message(message.chat.id, "💰 قیمت محصول را به تومان وارد کنید:")
+        except Exception as e:
+            logger.error(f"Error in waiting_description: {e}")
+            bot.send_message(message.chat.id, "❌ خطا در ثبت توضیحات!")
+        return
+    
+    elif state == "waiting_price":
+        try:
+            price = float(message.text.strip())
+            if price <= 0:
+                bot.send_message(message.chat.id, "❌ قیمت باید بیشتر از صفر باشد!")
+                return
+            
+            data = user_data[user_id]
+            product_id = db.add_product(
+                site_name=data['site_name'],
+                description=data['description'],
+                price=price
+            )
+            
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("➕ افزودن اکانت", callback_data=f"admin_add_account_{product_id}"))
+            markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin_products"))
+            
+            bot.send_message(
+                message.chat.id,
+                f"✅ محصول با موفقیت اضافه شد!\n\n"
+                f"🌐 سایت: {data['site_name']}\n"
+                f"💰 قیمت: {price:,.0f} تومان\n\n"
+                f"حالا می‌توانید اکانت اضافه کنید:",
+                reply_markup=markup
+            )
+            clear_state(user_id)
+        except ValueError:
+            bot.send_message(message.chat.id, "❌ لطفاً یک عدد معتبر وارد کنید!")
+        except Exception as e:
+            logger.error(f"Error in waiting_price: {e}")
+            bot.send_message(message.chat.id, "❌ خطا در ثبت قیمت!")
+        return
+    
+    # مدیریت افزودن اکانت
+    elif state == "waiting_login":
+        try:
+            data = user_data[user_id]
+            data['login'] = message.text.strip()
+            set_state(user_id, "waiting_password")
+            bot.send_message(message.chat.id, "🔑 رمز عبور اکانت را وارد کنید:")
+        except Exception as e:
+            logger.error(f"Error in waiting_login: {e}")
+            bot.send_message(message.chat.id, "❌ خطا!")
+        return
+    
+    elif state == "waiting_password":
+        try:
+            data = user_data[user_id]
+            data['password'] = message.text.strip()
+            set_state(user_id, "waiting_additional_info")
+            
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+            markup.add("بدون اطلاعات اضافی")
+            
+            bot.send_message(
+                message.chat.id,
+                "📋 اطلاعات اضافی (اختیاری):\n"
+                "مثلاً: ایمیل بازیابی، سوال امنیتی و ...\n\n"
+                "یا دکمه 'بدون اطلاعات اضافی' را بزنید:",
+                reply_markup=markup
+            )
+        except Exception as e:
+            logger.error(f"Error in waiting_password: {e}")
+            bot.send_message(message.chat.id, "❌ خطا!")
+        return
+    
+    elif state == "waiting_additional_info":
+        try:
+            data = user_data[user_id]
+            additional_info = None if message.text == "بدون اطلاعات اضافی" else message.text.strip()
+            
+            db.add_account(
+                product_id=data['product_id'],
+                login=data['login'],
+                password=data['password'],
+                additional_info=additional_info
+            )
+            
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("➕ افزودن اکانت دیگر", callback_data=f"admin_add_account_{data['product_id']}"))
+            markup.add(types.InlineKeyboardButton("🔙 بازگشت به محصول", callback_data=f"admin_product_{data['product_id']}"))
+            
+            bot.send_message(
+                message.chat.id,
+                "✅ اکانت با موفقیت اضافه شد!",
+                reply_markup=markup
+            )
+            clear_state(user_id)
+        except Exception as e:
+            logger.error(f"Error in waiting_additional_info: {e}")
+            bot.send_message(message.chat.id, "❌ خطا در افزودن اکانت!")
+        return
+    
+    # مدیریت ویرایش قیمت
+    elif state == "waiting_new_price":
+        try:
+            new_price = float(message.text)
+            if new_price <= 0:
+                bot.send_message(message.chat.id, "❌ قیمت باید بیشتر از صفر باشد!")
+                return
+            
+            data = user_data[user_id]
+            db.update_product_price(data['product_id'], new_price)
+            
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("🔙 بازگشت به محصول", callback_data=f"admin_product_{data['product_id']}"))
+            
+            bot.send_message(
+                message.chat.id,
+                f"✅ قیمت محصول '{data['product_name']}' به {new_price:,.0f} تومان تغییر یافت!",
+                reply_markup=markup
+            )
+            clear_state(user_id)
+        except ValueError:
+            bot.send_message(message.chat.id, "❌ لطفاً یک عدد معتبر وارد کنید!")
+        return
+    
+    # مدیریت ویرایش موجودی
+    elif state == "waiting_new_stock":
+        try:
+            new_stock = int(message.text)
+            if new_stock < 0:
+                bot.send_message(message.chat.id, "❌ موجودی نمی‌تواند منفی باشد!")
+                return
+            
+            data = user_data[user_id]
+            db.update_product_stock(data['product_id'], new_stock)
+            
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("🔙 بازگشت به محصول", callback_data=f"admin_product_{data['product_id']}"))
+            
+            bot.send_message(
+                message.chat.id,
+                f"✅ موجودی محصول '{data['product_name']}' به {new_stock} عدد تغییر یافت!",
+                reply_markup=markup
+            )
+            clear_state(user_id)
+        except ValueError:
+            bot.send_message(message.chat.id, "❌ لطفاً یک عدد صحیح وارد کنید!")
+        return
+    
+    # مدیریت افزودن فیلد فرم
+    elif state == "waiting_field_label":
+        try:
+            data = user_data[user_id]
+            data['field_label'] = message.text
+            
+            field_order = len(db.get_product_form_fields(data['product_id']))
+            
+            db.add_form_field(
+                product_id=data['product_id'],
+                field_name=f"field_{field_order + 1}",
+                field_label=data['field_label'],
+                field_type='text',
+                is_required=True,
+                field_order=field_order
+            )
+            
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("🔙 بازگشت به مدیریت فرم", callback_data=f"admin_manage_form_{data['product_id']}"))
+            
+            bot.send_message(
+                message.chat.id,
+                f"✅ فیلد با موفقیت اضافه شد!\n\n"
+                f"📦 محصول: {data['product_name']}\n"
+                f"❓ سوال: {data['field_label']}",
+                reply_markup=markup
+            )
+            clear_state(user_id)
+        except Exception as e:
+            logger.error(f"Error in waiting_field_label: {e}")
+            bot.send_message(message.chat.id, "❌ خطا!")
+        return
 
 # ===== تایید نهایی خرید با فرم =====
 
@@ -1192,6 +1423,7 @@ if __name__ == "__main__":
         logger.info("ربات متوقف شد")
     except Exception as e:
         logger.error(f"❌ خطا در اجرای ربات: {e}")
+
 
 
 
