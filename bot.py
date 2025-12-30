@@ -19,6 +19,18 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+# ایجاد Flask app برای health check
+app = Flask(__name__)
+
+@app.route('/')
+@app.route('/health')
+def health():
+    return 'Bot is running!', 200
+
+def run_web_server():
+    """اجرای وب‌سرور در thread جداگانه"""
+    port = int(os.environ.get('PORT', 8000))
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 # ایجاد بات با timeout بالاتر
 bot = telebot.TeleBot(
@@ -1176,4 +1188,5 @@ def message_router(message):
         # اگر هندلر مربوط به فرم در فایل دیگری است آن را صدا بزنید
         # account_maker_handlers.handle_state(...) 
         pass
+
 
