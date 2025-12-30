@@ -58,27 +58,23 @@ def is_admin(user_id: int) -> bool:
 
 # ===== پیام تعمیر و نگهداری =====
 MAINTENANCE_MESSAGE = """
-🔧 **ربات در حال تعمیر و نگهداری است**
+سلام **{name}**! 👋
 
-⚠️ به دلیل **نوسانات شدید دلار** و تغییرات قیمت‌های لحظه‌ای، ربات به صورت **موقت غیرفعال** شده است.
+متأسفانه به خاطر **نوسانات شدید دلار** و تغییرات لحظه‌ای قیمت‌ها، ربات رو **موقتاً خاموش** کردیم.
 
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃  🕐 **زمان تعطیلی:**        
-┃  تا اطلاع ثانوی            
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+⏳ **تا کی؟** تا وقتی اوضاع آروم بشه و همه چیز رو بروزرسانی کنیم.
 
-📌 **دلایل تعطیلی:**
-• نوسانات شدید نرخ دلار
-• به‌روزرسانی قیمت‌ها
-• بهینه‌سازی سیستم
+چرا این اتفاق افتاد؟
+• نوسانات بی‌سابقه دلار
+• تنظیم قیمت‌های جدید
+• بهبود و بهینه‌سازی سیستم
 
-💬 **اطلاع‌رسانی:**
-به محض برطرف شدن مشکلات، از طریق همین ربات به شما اطلاع‌رسانی خواهد شد.
+قول می‌دیم به محض اینکه همه چیز آماده شد، **از همین ربات** بهتون خبر بدیم!
 
-🙏 از **صبر و شکیبایی** شما بسیار سپاسگزاریم.
+🙏 واقعاً از **صبر و همراهی‌تون** ممنونیم ❤️
 
-━━━━━━━━━━━━━━━━━━━━━
-🌟 **تیم پشتیبانی**
+━━━━━━━━━━━━━━━━
+🌟 تیم پشتیبانی
 """
 
 ADMIN_PANEL_MESSAGE = """
@@ -92,7 +88,7 @@ ADMIN_PANEL_MESSAGE = """
 
 ━━━━━━━━━━━━━━━━━━━━━
 
-برای فعال‌سازی مجدد، فایل `bot.py` را اجرا کنید.
+برای فعال‌سازی مجدد، Start Command را به `python bot.py` تغییر دهید.
 """
 
 # ===== آمار =====
@@ -105,36 +101,38 @@ start_time = datetime.now()
 def handle_start(message):
     """پاسخ به دستور start"""
     user_id = message.from_user.id
-    username = message.from_user.username or message.from_user.first_name
+    user_name = message.from_user.first_name or message.from_user.username or "دوست عزیز"
     
     blocked_users.add(user_id)
     
-    logger.info(f"🚫 کاربر {username} ({user_id}) سعی در استفاده کرد")
+    logger.info(f"🚫 کاربر {user_name} ({user_id}) سعی در استفاده کرد")
     
     if is_admin(user_id):
         # پیام ویژه ادمین
+        admin_msg = MAINTENANCE_MESSAGE.format(name=user_name) + "\n\n⚡ **شما ادمین هستید - دسترسی محدود دارید**"
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("📊 آمار", callback_data="admin_stats"))
         
         bot.send_message(
             message.chat.id,
-            MAINTENANCE_MESSAGE + "\n\n⚡ **شما ادمین هستید - دسترسی محدود دارید**",
+            admin_msg,
             reply_markup=markup
         )
     else:
         # پیام عادی
         bot.send_message(
             message.chat.id,
-            MAINTENANCE_MESSAGE
+            MAINTENANCE_MESSAGE.format(name=user_name)
         )
 
 @bot.message_handler(commands=['admin', 'panel'])
 def handle_admin(message):
     """پنل ادمین"""
     if not is_admin(message.from_user.id):
+        user_name = message.from_user.first_name or message.from_user.username or "دوست عزیز"
         bot.send_message(
             message.chat.id,
-            MAINTENANCE_MESSAGE
+            MAINTENANCE_MESSAGE.format(name=user_name)
         )
         return
     
@@ -152,15 +150,15 @@ def handle_admin(message):
 def handle_all_messages(message):
     """پاسخ به تمام پیام‌ها"""
     user_id = message.from_user.id
-    username = message.from_user.username or message.from_user.first_name
+    user_name = message.from_user.first_name or message.from_user.username or "دوست عزیز"
     
     blocked_users.add(user_id)
     
-    logger.info(f"🚫 پیام از {username} ({user_id}): {message.text[:50] if message.text else 'N/A'}")
+    logger.info(f"🚫 پیام از {user_name} ({user_id}): {message.text[:50] if message.text else 'N/A'}")
     
     bot.send_message(
         message.chat.id,
-        MAINTENANCE_MESSAGE
+        MAINTENANCE_MESSAGE.format(name=user_name)
     )
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -243,14 +241,15 @@ def health():
 
 def run_flask():
     port = int(os.getenv('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 # ===== اجرا =====
 if __name__ == '__main__':
     try:
         # شروع health check server
-        Thread(target=run_flask, daemon=True).start()
-        logger.info("✅ Health check server started")
+        flask_thread = Thread(target=run_flask, daemon=True)
+        flask_thread.start()
+        logger.info("✅ Health check server started on port " + os.getenv('PORT', '8080'))
         
         logger.info("="*60)
         logger.info("🔧 ربات در حالت تعمیر و نگهداری است")
@@ -264,4 +263,6 @@ if __name__ == '__main__':
         logger.info("\n🛑 ربات متوقف شد")
     except Exception as e:
         logger.error(f"❌ خطا: {e}")
+        import traceback
+        traceback.print_exc()
         raise
