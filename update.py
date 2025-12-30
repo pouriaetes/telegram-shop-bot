@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-حالت تعمیر و نگهداری ربات
-Bot Maintenance Mode
+حالت تعمیر و نگهداری ربات - نسخه Webhook
+Bot Maintenance Mode - Webhook Version
 """
 
 import os
 import logging
 import telebot
 from telebot import types
+from flask import Flask, request
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import SecretStr
 from datetime import datetime
@@ -17,7 +18,6 @@ from datetime import datetime
 class Settings(BaseSettings):
     bot_token: SecretStr
     admin_ids: str = ""
-    proxy_url: str | None = None
     
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -37,17 +37,9 @@ logger = logging.getLogger(__name__)
 # ===== ربات =====
 bot = telebot.TeleBot(
     config.bot_token.get_secret_value(),
-    parse_mode='Markdown'
+    parse_mode='Markdown',
+    threaded=False
 )
-
-# تنظیم پروکسی
-if config.proxy_url:
-    from telebot import apihelper
-    apihelper.proxy = {
-        'http': config.proxy_url,
-        'https': config.proxy_url
-    }
-    logger.info("🔐 پروکسی فعال است")
 
 # لیست ادمین‌ها
 ADMIN_IDS = [int(x.strip()) for x in config.admin_ids.split(',') if x.strip()]
@@ -64,17 +56,12 @@ MAINTENANCE_MESSAGE = """
 
 ⏳ **تا کی؟** تا وقتی اوضاع آروم بشه و همه چیز رو بروزرسانی کنیم.
 
-چرا این اتفاق افتاد؟
-• نوسانات بی‌سابقه دلار
-• تنظیم قیمت‌های جدید
-• بهبود و بهینه‌سازی سیستم
-
 قول می‌دیم به محض اینکه همه چیز آماده شد، **از همین ربات** بهتون خبر بدیم!
 
 🙏 واقعاً از **صبر و همراهی‌تون** ممنونیم ❤️
 
-━━━━━━━━━━━━━━━━
-🌟 تیم پشتیبانی
+
+تیم پشتیبانی
 """
 
 ADMIN_PANEL_MESSAGE = """
@@ -84,7 +71,7 @@ ADMIN_PANEL_MESSAGE = """
 
 📊 **وضعیت:** 🔴 غیرفعال
 ⏰ **از تاریخ:** {}
-👥 **تعداد کاربران مسدود شده:** همه
+👥 **کاربران مسدود شده:** {}
 
 ━━━━━━━━━━━━━━━━━━━━━
 
@@ -95,9 +82,11 @@ ADMIN_PANEL_MESSAGE = """
 blocked_users = set()
 start_time = datetime.now()
 
+# ===== Flask App =====
+app = Flask(__name__)
+
 # ===== Handlers =====
 
-@bot.message_handler(commands=['start', 'help'])
 def handle_start(message):
     """پاسخ به دستور start"""
     user_id = message.from_user.id
@@ -125,7 +114,6 @@ def handle_start(message):
             MAINTENANCE_MESSAGE.format(name=user_name)
         )
 
-@bot.message_handler(commands=['admin', 'panel'])
 def handle_admin(message):
     """پنل ادمین"""
     if not is_admin(message.from_user.id):
@@ -142,11 +130,13 @@ def handle_admin(message):
     
     bot.send_message(
         message.chat.id,
-        ADMIN_PANEL_MESSAGE.format(start_time.strftime("%Y-%m-%d %H:%M:%S")),
+        ADMIN_PANEL_MESSAGE.format(
+            start_time.strftime("%Y-%m-%d %H:%M:%S"),
+            len(blocked_users)
+        ),
         reply_markup=markup
     )
 
-@bot.message_handler(func=lambda message: True)
 def handle_all_messages(message):
     """پاسخ به تمام پیام‌ها"""
     user_id = message.from_user.id
@@ -161,7 +151,6 @@ def handle_all_messages(message):
         MAINTENANCE_MESSAGE.format(name=user_name)
     )
 
-@bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
     """پاسخ به callback ها"""
     if not is_admin(call.from_user.id):
@@ -223,41 +212,99 @@ def handle_callbacks(call):
     
     bot.answer_callback_query(call.id)
 
-# ===== Health Check =====
-from flask import Flask
-from threading import Thread
+# ===== Process Update =====
+def process_update(update):
+    """پردازش هر update"""
+    try:
+        if update.message:
+            message = update.message
+            
+            # بررسی command ها
+            if message.text:
+                if message.text.startswith('/start') or message.text.startswith('/help'):
+                    handle_start(message)
+                elif message.text.startswith('/admin') or message.text.startswith('/panel'):
+                    handle_admin(message)
+                else:
+                    handle_all_messages(message)
+            else:
+                handle_all_messages(message)
+        
+        elif update.callback_query:
+            handle_callbacks(update.callback_query)
+            
+    except Exception as e:
+        logger.error(f"❌ خطا در پردازش update: {e}")
 
-app = Flask(__name__)
+# ===== Flask Routes =====
 
-@app.route('/')
-@app.route('/health')
-def health():
+@app.route('/', methods=['GET'])
+def index():
     return {
         'status': 'maintenance',
-        'message': 'Bot is under maintenance',
+        'message': 'Bot is under maintenance - ربات در حال تعمیر است',
         'blocked_users': len(blocked_users),
-        'uptime_seconds': (datetime.now() - start_time).total_seconds()
+        'uptime_hours': (datetime.now() - start_time).total_seconds() / 3600
     }, 200
 
-def run_flask():
-    port = int(os.getenv('PORT', 8080))
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+@app.route('/health', methods=['GET'])
+def health():
+    return {'status': 'ok'}, 200
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    """دریافت update ها از تلگرام"""
+    try:
+        json_str = request.get_data().decode('UTF-8')
+        update = telebot.types.Update.de_json(json_str)
+        process_update(update)
+        return '', 200
+    except Exception as e:
+        logger.error(f"❌ خطا در webhook: {e}")
+        return '', 500
+
+# ===== Setup Webhook =====
+def setup_webhook():
+    """تنظیم webhook"""
+    try:
+        # حذف webhook قبلی
+        bot.remove_webhook()
+        logger.info("✅ Webhook قبلی حذف شد")
+        
+        # دریافت URL از Railway
+        railway_domain = os.getenv('RAILWAY_PUBLIC_DOMAIN') or os.getenv('RAILWAY_STATIC_URL')
+        
+        if railway_domain:
+            webhook_url = f"https://{railway_domain}/webhook"
+            bot.set_webhook(url=webhook_url)
+            logger.info(f"✅ Webhook تنظیم شد: {webhook_url}")
+        else:
+            logger.warning("⚠️ RAILWAY_PUBLIC_DOMAIN یافت نشد - از polling استفاده می‌شود")
+            
+    except Exception as e:
+        logger.error(f"❌ خطا در تنظیم webhook: {e}")
 
 # ===== اجرا =====
 if __name__ == '__main__':
     try:
-        # شروع health check server
-        flask_thread = Thread(target=run_flask, daemon=True)
-        flask_thread.start()
-        logger.info("✅ Health check server started on port " + os.getenv('PORT', '8080'))
-        
         logger.info("="*60)
         logger.info("🔧 ربات در حالت تعمیر و نگهداری است")
         logger.info(f"⏰ شروع: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("="*60)
         
-        # شروع polling
-        bot.infinity_polling(timeout=60, long_polling_timeout=60)
+        # تنظیم webhook
+        setup_webhook()
+        
+        # اجرای Flask
+        port = int(os.getenv('PORT', 8080))
+        logger.info(f"🚀 Flask server starting on port {port}")
+        
+        app.run(
+            host='0.0.0.0',
+            port=port,
+            debug=False,
+            use_reloader=False
+        )
         
     except KeyboardInterrupt:
         logger.info("\n🛑 ربات متوقف شد")
@@ -265,4 +312,3 @@ if __name__ == '__main__':
         logger.error(f"❌ خطا: {e}")
         import traceback
         traceback.print_exc()
-        raise
