@@ -10,6 +10,33 @@ from telebot import types
 import json
 
 logger = logging.getLogger(__name__)
+# ===== بدون دیتابیس - ذخیره موقت در حافظه =====
+import time
+
+# ذخیره سفارشات موقت (بدون دیتابیس)
+pending_orders = {}
+order_counter = 1
+
+# اطلاعات محصول ChatGPT GO
+CHATGPT_GO_PRODUCT = {
+    "name": "🛡️ ChatGPT GO",
+    "description": """این اکانت کرک ‌شده است و به همین دلیل، قیمت آن پایین‌تر از قیمت اصلی سایت رسمی می‌باشد.""",
+    "rules": """📋 قوانین:
+1. این حساب هیچ پشتیبانی‌ای ندارد (به جز در هفته اول، تنها در صورت غیرفعال شدن حساب).
+2. این حساب یک حساب کاربری معمولی است که مستقیماً از OpenAI دریافت شده؛ بنابراین، حتماً از VPN معتبر استفاده کنید.
+3. استفاده همزمان چندین کاربر از این حساب ممکن است در طول زمان منجر به مسدود شدن حساب شما شود (هیچ گونه پشتیبانی یا بازگشت وجه وجود نخواهد داشت).
+4. این حساب به مدت یک سال برای شما فعال خواهد بود.
+5. این حساب روی ایمیل شخصی شما ساخته و فعال می‌شود؛ فقط باید روی آن ایمیل هیچ حسابی از قبل وجود نداشته باشد (برای امنیت بیشتر بهتر است از یک ایمیل جدید استفاده کنید).
+6. این حساب به قیمت 1,499,000 تومان به فروش می‌رسد.""",
+    "price": 1499000,
+    "delivery_time": 5
+}
+
+# سیستم کد تخفیف
+DISCOUNT_CODES = {
+    'WELCOME10': {'percent': 10, 'max_uses': 100, 'used': 0},
+    'CHATGPT20': {'percent': 20, 'max_uses': 50, 'used': 0}
+}
 
 # ===== DATABASE METHODS =====
 
@@ -224,124 +251,94 @@ class AccountMakerHandlers:
     def __init__(self, bot, db):
         self.bot = bot
         self.db = db
-    
+        
     def register_handlers(self):
         """ثبت handlers"""
-        
         # User handlers
         self.bot.callback_query_handler(func=lambda c: c.data == "account_maker")(self.show_account_types)
-        self.bot.callback_query_handler(func=lambda c: c.data.startswith("acctype_"))(self.show_account_type_detail)
-        self.bot.callback_query_handler(func=lambda c: c.data.startswith("accbuy_"))(self.start_purchase_flow)
-        self.bot.callback_query_handler(func=lambda c: c.data.startswith("acc_confirm_email_"))(self.confirm_email)
-        self.bot.callback_query_handler(func=lambda c: c.data.startswith("acc_pay_"))(self.process_payment)
+        self.bot.callback_query_handler(func=lambda c: c.data == 'chatgpt_go_start_purchase')(self.start_purchase_flow)  # جدید
         self.bot.callback_query_handler(func=lambda c: c.data == "my_custom_orders")(self.show_my_orders)
         
         # Admin handlers
-        self.bot.callback_query_handler(func=lambda c: c.data == "admin_account_maker")(self.admin_menu)
-        self.bot.callback_query_handler(func=lambda c: c.data == "admin_acc_add_type")(self.admin_add_type_start)
-        self.bot.callback_query_handler(func=lambda c: c.data == "admin_acc_manage_types")(self.admin_manage_types)
-        self.bot.callback_query_handler(func=lambda c: c.data.startswith("admin_acctype_"))(self.admin_show_type)
-        self.bot.callback_query_handler(func=lambda c: c.data.startswith("admin_acc_toggle_"))(self.admin_toggle_type)
-        self.bot.callback_query_handler(func=lambda c: c.data.startswith("admin_acc_delete_"))(self.admin_delete_type)
-        self.bot.callback_query_handler(func=lambda c: c.data == "admin_acc_pending_orders")(self.admin_pending_orders)
-        self.bot.callback_query_handler(func=lambda c: c.data.startswith("admin_acc_order_"))(self.admin_show_order)
-        self.bot.callback_query_handler(func=lambda c: c.data.startswith("admin_acc_deliver_"))(self.admin_deliver_order)
-        self.bot.callback_query_handler(func=lambda c: c.data == "admin_acc_statistics")(self.admin_statistics)
-
-         # ✅ جدید - تایید/رد توسط ادمین
         self.bot.callback_query_handler(func=lambda c: c.data.startswith("admin_acc_approve_"))(self.admin_approve_order)
         self.bot.callback_query_handler(func=lambda c: c.data.startswith("admin_acc_reject_"))(self.admin_reject_order)
+        self.bot.callback_query_handler(func=lambda c: c.data.startswith("admin_acc_deliver_"))(self.admin_deliver_order)
+        self.bot.callback_query_handler(func=lambda c: c.data == "admin_acc_pending_orders")(self.admin_pending_orders)
+        self.bot.callback_query_handler(func=lambda c: c.data.startswith("admin_acc_order_"))(self.admin_show_order)
+
+   
     # ===== USER HANDLERS =====
-    
     def show_account_types(self, call):
-        """نمایش انواع اکانت"""
-        with self.db.get_connection() as conn:
-            account_types = AccountMakerDB.get_active_account_types(conn)
+        """نمایش ChatGPT GO"""
+        product = CHATGPT_GO_PRODUCT
         
-        if not account_types:
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main"))
-            
-            self.bot.edit_message_text(
-                "❌ در حال حاضر نوع اکانتی موجود نیست.",
-                call.message.chat.id,
-                call.message.message_id,
-                reply_markup=markup
-            )
-            return
-        
-        text = "🎯 **خرید اکانت سفارشی**\n\n"
-        text += "اکانت خود را انتخاب کنید:\n"
-        
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for acc_type in account_types:
-            button_text = f"🛡️ {acc_type['name']} - {acc_type['price']:,.0f} تومان"
-            markup.add(types.InlineKeyboardButton(button_text, callback_data=f"acctype_{acc_type['id']}"))
-        
-        markup.add(
-            types.InlineKeyboardButton("📦 سفارشات من", callback_data="my_custom_orders"),
-            types.InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")
-        )
-        
-        self.bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup)
-    
-    def show_account_type_detail(self, call):
-        """نمایش جزئیات نوع اکانت"""
-        type_id = int(call.data.split("_")[1])
-        
-        with self.db.get_connection() as conn:
-            acc_type = AccountMakerDB.get_account_type(conn, type_id)
-        
-        if not acc_type:
-            self.bot.answer_callback_query(call.id, "❌ اکانت یافت نشد!", show_alert=True)
-            return
-        
-        text = (
-            f"🛡️ **{acc_type['name']}**\n\n"
-            f"📝 توضیحات:\n{acc_type['description']}\n\n"
-            f"📋 **قوانین:**\n{acc_type['rules']}\n\n"
-            f"💰 قیمت: {acc_type['price']:,.0f} تومان\n"
-            f"⏱ زمان تحویل: حداکثر {acc_type['delivery_time_hours']} ساعت"
-        )
+        text = f"""{product['name']}
+
+    📝 توضیحات:
+    {product['description']}
+
+    {product['rules']}
+
+    💰 قیمت: {product['price']:,} تومان
+    ⏱ زمان تحویل: حداکثر {product['delivery_time']} ساعت"""
         
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("🛒 خرید این اکانت", callback_data=f"accbuy_{type_id}"))
-        markup.add(types.InlineKeyboardButton("🔙 بازگشت به لیست", callback_data="account_maker"))
+        markup.add(types.InlineKeyboardButton(
+            "✅ ادامه خرید", 
+            callback_data='chatgpt_go_start_purchase'
+        ))
+        markup.add(types.InlineKeyboardButton(
+            "📦 سفارشات من", 
+            callback_data='my_custom_orders'
+        ))
+        markup.add(types.InlineKeyboardButton(
+            "🔙 بازگشت", 
+            callback_data='back_to_main'
+        ))
         
-        self.bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup)
-    
+        self.bot.edit_message_text(
+            text, 
+            call.message.chat.id, 
+            call.message.message_id,
+            reply_markup=markup
+        )
     def start_purchase_flow(self, call):
-        """شروع فرآیند خرید"""
-        type_id = int(call.data.split("_")[1])
+        """شروع فرآیند خرید ChatGPT GO"""
+        global order_counter, pending_orders
         user_id = call.from_user.id
         
-        with self.db.get_connection() as conn:
-            acc_type = AccountMakerDB.get_account_type(conn, type_id)
+        # ایجاد order_id جدید
+        order_id = f"CGPT_{order_counter}_{int(time.time())}"
+        order_counter += 1
         
-        if not acc_type:
-            self.bot.answer_callback_query(call.id, "❌ اکانت یافت نشد!", show_alert=True)
-            return
-        
-        # ذخیره state
-        from bot import user_data, set_state
-        user_data[user_id] = {
-            'account_type_id': type_id,
-            'account_type_name': acc_type['name'],
-            'price': acc_type['price']
+        # ذخیره اطلاعات اولیه
+        pending_orders[order_id] = {
+            'user_id': user_id,
+            'username': call.from_user.username,
+            'status': 'waiting_email',
+            'created_at': time.time(),
+            'product': 'ChatGPT GO'
         }
-        set_state(user_id, f"acc_waiting_email_{type_id}")
+        
+        from bot import user_data, set_state
+        user_data[user_id] = {'order_id': order_id}
+        set_state(user_id, 'chatgpt_go_waiting_email')
         
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("❌ لغو", callback_data="account_maker"))
+        markup.add(types.InlineKeyboardButton("❌ لغو", callback_data='account_maker'))
         
         self.bot.send_message(
             call.message.chat.id,
-            f"📧 **مرحله 1 از 5: ارسال ایمیل**\n\n"
-            f"لطفاً ایمیل خود را ارسال کنید:\n\n"
-            f"⚠️ این ایمیل باید معتبر باشد و دسترسی به آن را داشته باشید.",
+            f"""📧 **مرحله 2 از 6: ارسال ایمیل**
+
+    لطفاً ایمیل خود را ارسال کنید:
+    (این ایمیل نباید قبلاً در OpenAI ثبت شده باشد)
+
+    ⚠️ توجه: از یک ایمیل جدید برای امنیت بیشتر استفاده کنید.""",
             reply_markup=markup
         )
         self.bot.delete_message(call.message.chat.id, call.message.message_id)
+
 
     def confirm_email(self, call):
         """تایید ایمیل توسط کاربر"""
@@ -470,42 +467,40 @@ class AccountMakerHandlers:
         """نمایش سفارشات کاربر"""
         user_id = call.from_user.id
         
-        with self.db.get_connection() as conn:
-            orders = AccountMakerDB.get_user_orders(conn, user_id)
+        # فیلتر سفارشات کاربر از pending_orders
+        user_orders = [(order_id, order) for order_id, order in pending_orders.items() 
+                    if order['user_id'] == user_id]
         
-        if not orders:
+        if not user_orders:
             markup = types.InlineKeyboardMarkup()
             markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="account_maker"))
-            
             self.bot.edit_message_text(
-                "📦 شما هنوز سفارشی ثبت نکرده‌اید.",
+                "📦 شما هنوز سفارشی ثبت نکردهاید.",
                 call.message.chat.id,
                 call.message.message_id,
                 reply_markup=markup
             )
             return
         
-        text = "📦 **سفارشات اکانت سفارشی شما:**\n\n"
+        text = "📦 **سفارشات ChatGPT GO شما:**\n\n"
         
         status_text = {
+            'waiting_email': '📧 در انتظار ایمیل',
+            'waiting_password': '🔐 در انتظار پسورد',
             'waiting_admin_approval': '⏳ در انتظار تایید ادمین',
-            'waiting_email_confirmation': '📧 در انتظار تایید ایمیل',
-            'confirmed': '✅ تایید شده',
-            'paid': '💳 پرداخت شده',
+            'preparing': '🔧 در حال آماده‌سازی',
             'delivered': '🎉 تحویل داده شده',
-            'rejected': '❌ رد شده',
-            'cancelled': '❌ لغو شده'
+            'rejected': '❌ رد شده'
         }
         
-        for order in orders[:10]:
-            text += (
-                f"🆔 سفارش #{order['id']}\n"
-                f"🎮 نوع: {order['account_type_name']}\n"
-                f"📧 ایمیل: {order['email']}\n"
-                f"💰 قیمت: {order['price']:,.0f} تومان\n"
-                f"📊 وضعیت: {status_text.get(order['status'], order['status'])}\n"
-                f"📅 تاریخ: {order['created_at']}\n\n"
-            )
+        for order_id, order in user_orders[:5]:
+            text += f"""🆔 سفارش: `{order_id}`
+    📧 ایمیل: {order.get('email', 'N/A')}
+    💰 قیمت: {CHATGPT_GO_PRODUCT['price']:,} تومان
+    📊 وضعیت: {status_text.get(order['status'], order['status'])}
+    📅 تاریخ: {time.strftime('%Y-%m-%d %H:%M', time.localtime(order['created_at']))}
+
+    """
         
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="account_maker"))
@@ -808,6 +803,256 @@ class AccountMakerHandlers:
     
     # ===== HELPER METHODS =====
     
+    def admin_approve_order(self, call):
+        """تایید سفارش توسط ادمین"""
+        from bot import is_admin
+        if not is_admin(call.from_user.id):
+            self.bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        
+        order_id = call.data.replace('admin_acc_approve_', '')
+        
+        if order_id not in pending_orders:
+            self.bot.answer_callback_query(call.id, "❌ سفارش یافت نشد!", show_alert=True)
+            return
+        
+        order = pending_orders[order_id]
+        
+        if order['status'] != 'waiting_admin_approval':
+            self.bot.answer_callback_query(call.id, "❌ این سفارش قبلاً پردازش شده!", show_alert=True)
+            return
+        
+        # تغییر وضعیت به در حال آماده‌سازی
+        order['status'] = 'preparing'
+        order['approved_by'] = call.from_user.id
+        order['approved_at'] = time.time()
+        
+        # به‌روزرسانی پیام ادمین
+        updated_text = f"""✅ **سفارش تایید شد**
+
+    📋 اطلاعات سفارش:
+    • شناسه: `{order_id}`
+    • User ID: `{order['user_id']}`
+    • ایمیل: `{order['email']}`
+
+    ✅ تایید شده توسط: {call.from_user.first_name}
+    🕐 زمان تایید: {time.strftime('%H:%M:%S')}
+
+    **مرحله بعد:** لطفاً اطلاعات اکانت را ارسال کنید."""
+        
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton(
+            "📤 ارسال اطلاعات اکانت", 
+            callback_data=f'admin_acc_send_{order_id}'
+        ))
+        
+        try:
+            self.bot.edit_message_text(
+                updated_text,
+                call.message.chat.id,
+                call.message.message_id,
+                reply_markup=markup
+            )
+        except:
+            pass
+        
+        # اطلاع‌رسانی به کاربر
+        self.bot.send_message(
+            order['user_id'],
+            f"""✅ **سفارش شما تایید شد!**
+
+    شناسه سفارش: `{order_id}`
+
+    ⏳ **مرحله 5 از 6: در حال آماده‌سازی اکانت**
+
+    لطفاً منتظر بمانید تا حساب شما آماده شود.
+    این فرآیند حداکثر {CHATGPT_GO_PRODUCT['delivery_time']} ساعت طول می‌کشد.
+
+    ✅ به محض آماده شدن، اطلاعات اکانت برای شما ارسال خواهد شد."""
+        )
+        
+        self.bot.answer_callback_query(call.id, "✅ سفارش تایید شد!", show_alert=True)
+
+    def admin_reject_order(self, call):
+        """رد سفارش توسط ادمین"""
+        from bot import is_admin
+        if not is_admin(call.from_user.id):
+            self.bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        
+        order_id = call.data.replace('admin_acc_reject_', '')
+        
+        if order_id not in pending_orders:
+            self.bot.answer_callback_query(call.id, "❌ سفارش یافت نشد!", show_alert=True)
+            return
+        
+        order = pending_orders[order_id]
+        
+        if order['status'] != 'waiting_admin_approval':
+            self.bot.answer_callback_query(call.id, "❌ این سفارش قبلاً پردازش شده!", show_alert=True)
+            return
+        
+        # تغییر وضعیت به رد شده
+        order['status'] = 'rejected'
+        order['rejected_by'] = call.from_user.id
+        order['rejected_at'] = time.time()
+        
+        # به‌روزرسانی پیام ادمین
+        updated_text = f"""❌ **سفارش رد شد**
+
+    📋 اطلاعات سفارش:
+    • شناسه: `{order_id}`
+    • User ID: `{order['user_id']}`
+
+    ❌ رد شده توسط: {call.from_user.first_name}"""
+        
+        try:
+            self.bot.edit_message_text(
+                updated_text,
+                call.message.chat.id,
+                call.message.message_id
+            )
+        except:
+            pass
+        
+        # اطلاع‌رسانی به کاربر
+        self.bot.send_message(
+            order['user_id'],
+            f"""❌ **متأسفانه سفارش شما رد شد**
+
+    شناسه سفارش: `{order_id}`
+
+    دلیل: اطلاعات ارسالی معتبر نبود یا ایمیل قبلاً در OpenAI ثبت شده است.
+
+    💬 برای اطلاعات بیشتر با پشتیبانی تماس بگیرید."""
+        )
+        
+        self.bot.answer_callback_query(call.id, "❌ سفارش رد شد!", show_alert=True)
+
+    def admin_deliver_order(self, call):
+        """درخواست ارسال اطلاعات اکانت از ادمین"""
+        from bot import is_admin, set_state, user_data
+        if not is_admin(call.from_user.id):
+            return
+        
+        order_id = call.data.replace('admin_acc_send_', '')
+        
+        if order_id not in pending_orders:
+            self.bot.answer_callback_query(call.id, "❌ سفارش یافت نشد!", show_alert=True)
+            return
+        
+        # ذخیره order_id برای ادمین
+        user_data[call.from_user.id] = {'admin_delivering_order': order_id}
+        set_state(call.from_user.id, 'admin_sending_account_info')
+        
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("❌ لغو", callback_data='admin_menu'))
+        
+        self.bot.send_message(
+            call.message.chat.id,
+            f"""📤 **ارسال اطلاعات اکانت**
+
+    شناسه سفارش: `{order_id}`
+
+    لطفاً اطلاعات اکانت را به فرمت زیر ارسال کنید:
+    Username: example@email.com
+    Password: your_password_here
+    Link: https://chat.openai.com
+
+    یا هر فرمت دلخواه دیگری که اطلاعات کامل را شامل شود.""",
+            reply_markup=markup
+        )
+        
+        self.bot.delete_message(call.message.chat.id, call.message.message_id)
+
+    def admin_pending_orders(self, call):
+        """نمایش سفارشات در انتظار"""
+        from bot import is_admin
+        if not is_admin(call.from_user.id):
+            return
+        
+        # فیلتر سفارشات در انتظار
+        orders = [order for order_id, order in pending_orders.items() 
+                if order['status'] in ['waiting_admin_approval', 'preparing']]
+        
+        if not orders:
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin_menu"))
+            self.bot.edit_message_text(
+                "✅ سفارش در انتظاری وجود ندارد.",
+                call.message.chat.id,
+                call.message.message_id,
+                reply_markup=markup
+            )
+            return
+        
+        text = "⏳ **سفارشات در انتظار:**\n\n"
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        
+        for order_id, order in list(pending_orders.items())[:10]:
+            if order['status'] in ['waiting_admin_approval', 'preparing']:
+                status_emoji = {'waiting_admin_approval': '⏳', 'preparing': '🔧'}.get(order['status'], '❓')
+                button_text = f"{status_emoji} {order_id} - {order.get('email', 'N/A')[:20]}..."
+                markup.add(types.InlineKeyboardButton(button_text, callback_data=f'admin_acc_order_{order_id}'))
+        
+        markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin_menu"))
+        
+        self.bot.edit_message_text(
+            text + f"تعداد: {len(orders)} سفارش",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=markup
+        )
+
+    def admin_show_order(self, call):
+        """نمایش جزئیات سفارش برای ادمین"""
+        from bot import is_admin
+        if not is_admin(call.from_user.id):
+            return
+        
+        order_id = call.data.replace('admin_acc_order_', '')
+        
+        if order_id not in pending_orders:
+            self.bot.answer_callback_query(call.id, "❌ یافت نشد!", show_alert=True)
+            return
+        
+        order = pending_orders[order_id]
+        
+        status_text = {
+            'waiting_admin_approval': '⏳ در انتظار تایید',
+            'preparing': '🔧 در حال آماده‌سازی',
+            'delivered': '✅ تحویل داده شده',
+            'rejected': '❌ رد شده'
+        }
+        
+        text = f"""🆔 **سفارش {order_id}**
+
+    👤 کاربر: {order['user_id']}
+    🛡️ نوع اکانت: ChatGPT GO
+    📧 ایمیل: `{order.get('email', 'N/A')}`
+    🔐 پسورد: `{order.get('password', 'N/A')}`
+    💰 مبلغ: {CHATGPT_GO_PRODUCT['price']:,} تومان
+    📊 وضعیت: {status_text.get(order['status'], order['status'])}
+    📅 تاریخ: {time.strftime('%Y-%m-%d %H:%M', time.localtime(order['created_at']))}"""
+        
+        if order.get('account_info'):
+            text += f"\n\n🎯 اطلاعات اکانت تحویلی:\n{order['account_info']}"
+        
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        
+        if order['status'] == 'waiting_admin_approval':
+            markup.row(
+                types.InlineKeyboardButton("✅ تایید", callback_data=f'admin_acc_approve_{order_id}'),
+                types.InlineKeyboardButton("❌ رد", callback_data=f'admin_acc_reject_{order_id}')
+            )
+        elif order['status'] == 'preparing':
+            markup.add(types.InlineKeyboardButton("📤 ارسال اکانت", callback_data=f'admin_acc_send_{order_id}'))
+        
+        markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin_acc_pending_orders"))
+        
+        self.bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+        
     def notify_admins_new_order(self, order_id: int):
         """اطلاع به ادمین‌ها - سفارش جدید"""
         from config import config
@@ -927,104 +1172,6 @@ class AccountMakerHandlers:
             except Exception as e:
                 logger.error(f"خطا در ارسال به ادمین {admin_id}: {e}")
 
-    def admin_approve_order(self, call):
-        """تایید سفارش توسط ادمین"""
-        from bot import is_admin
-        
-        if not is_admin(call.from_user.id):
-            self.bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!", show_alert=True)
-            return
-        
-        order_id = int(call.data.split("_")[3])
-        
-        with self.db.get_connection() as conn:
-            order = AccountMakerDB.get_order(conn, order_id)
-            
-            if not order:
-                self.bot.answer_callback_query(call.id, "❌ سفارش یافت نشد!", show_alert=True)
-                return
-            
-            if order['status'] != 'waiting_admin_approval':
-                self.bot.answer_callback_query(call.id, "⚠️ این سفارش قبلاً پردازش شده است!", show_alert=True)
-                return
-            
-            # تغییر وضعیت به "در انتظار تایید ایمیل"
-            AccountMakerDB.update_order_status(conn, order_id, 'waiting_email_confirmation')
-        
-        # به‌روزرسانی پیام ادمین
-        new_text = (
-            f"✅ **سفارش تایید شد!**\n\n"
-            f"🆔 سفارش: #{order_id}\n"
-            f"👤 کاربر: {order['user_id']}\n"
-            f"🎮 نوع: {order['account_type_name']}\n"
-            f"📧 ایمیل: {order['email']}\n"
-            f"💰 مبلغ: {order['price']:,.0f} تومان\n\n"
-            f"✅ تایید شده توسط ادمین {call.from_user.id}\n"
-            f"📤 پیام به کاربر ارسال شد."
-        )
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("👁 مشاهده جزئیات", callback_data=f"admin_acc_order_{order_id}"))
-        
-        try:
-            self.bot.edit_message_text(
-                new_text,
-                call.message.chat.id,
-                call.message.message_id,
-                reply_markup=markup
-            )
-        except:
-            pass
-        
-        self.bot.answer_callback_query(call.id, "✅ سفارش تایید شد!", show_alert=True)
-        
-        # اطلاع به کاربر
-        self.notify_user_approved(order_id)
-
-    def admin_reject_order(self, call):
-        """رد سفارش توسط ادمین"""
-        from bot import is_admin
-        
-        if not is_admin(call.from_user.id):
-            self.bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!", show_alert=True)
-            return
-        
-        order_id = int(call.data.split("_")[3])
-        
-        with self.db.get_connection() as conn:
-            order = AccountMakerDB.get_order(conn, order_id)
-            
-            if not order:
-                self.bot.answer_callback_query(call.id, "❌ سفارش یافت نشد!", show_alert=True)
-                return
-            
-            if order['status'] != 'waiting_admin_approval':
-                self.bot.answer_callback_query(call.id, "⚠️ این سفارش قبلاً پردازش شده است!", show_alert=True)
-                return
-            
-            # تغییر وضعیت به "رد شده"
-            AccountMakerDB.update_order_status(conn, order_id, 'rejected')
-        
-        # به‌روزرسانی پیام ادمین
-        new_text = (
-            f"❌ **سفارش رد شد!**\n\n"
-            f"🆔 سفارش: #{order_id}\n"
-            f"👤 کاربر: {order['user_id']}\n"
-            f"🎮 نوع: {order['account_type_name']}\n"
-            f"💰 مبلغ: {order['price']:,.0f} تومان\n\n"
-            f"❌ رد شده توسط ادمین {call.from_user.id}\n"
-            f"📤 پیام به کاربر ارسال شد."
-        )
-        
-        try:
-            self.bot.edit_message_text(new_text, call.message.chat.id, call.message.message_id)
-        except:
-            pass
-        
-        self.bot.answer_callback_query(call.id, "❌ سفارش رد شد!", show_alert=True)
-        
-        # اطلاع به کاربر
-        self.notify_user_rejected(order_id)
 
     def notify_user_approved(self, order_id: int):
         """اطلاع به کاربر - ادمین تایید کرد"""
@@ -1081,165 +1228,145 @@ class AccountMakerHandlers:
             logger.error(f"خطا در ارسال به کاربر {order['user_id']}: {e}")
 
 # ===== MESSAGE HANDLERS برای State Management =====
-
 def handle_account_maker_states(bot, db, message, user_id, state, user_data):
     """مدیریت state های Account Maker"""
     
-    # افزودن نوع اکانت توسط ادمین
-    if state == "acc_admin_waiting_name":
-        user_data[user_id]['name'] = message.text
-        from bot import set_state
-        set_state(user_id, "acc_admin_waiting_description")
-        bot.send_message(message.chat.id, "📝 توضیحات نوع اکانت را وارد کنید:")
-        return True
-    
-    elif state == "acc_admin_waiting_description":
-        user_data[user_id]['description'] = message.text
-        from bot import set_state
-        set_state(user_id, "acc_admin_waiting_rules")
-        bot.send_message(message.chat.id, "📋 قوانین و نکات مهم را وارد کنید:")
-        return True
-    
-    elif state == "acc_admin_waiting_rules":
-        user_data[user_id]['rules'] = message.text
-        from bot import set_state
-        set_state(user_id, "acc_admin_waiting_price")
-        bot.send_message(message.chat.id, "💰 قیمت را به تومان وارد کنید:")
-        return True
-    
-    elif state == "acc_admin_waiting_price":
-        try:
-            price = float(message.text.replace(',', ''))
-            if price <= 0:
-                bot.send_message(message.chat.id, "❌ قیمت باید بیشتر از صفر باشد!")
-                return True
-            
-            user_data[user_id]['price'] = price
-            from bot import set_state
-            set_state(user_id, "acc_admin_waiting_delivery_time")
-            bot.send_message(message.chat.id, "⏱ زمان تحویل را به ساعت وارد کنید (مثلاً 4):")
-            return True
-        except ValueError:
-            bot.send_message(message.chat.id, "❌ لطفاً یک عدد معتبر وارد کنید!")
-            return True
-    
-    elif state == "acc_admin_waiting_delivery_time":
-        try:
-            hours = int(message.text)
-            if hours <= 0:
-                bot.send_message(message.chat.id, "❌ زمان تحویل باید بیشتر از صفر باشد!")
-                return True
-            
-            data = user_data[user_id]
-            
-            with db.get_connection() as conn:
-                type_id = AccountMakerDB.add_account_type(
-                    conn,
-                    name=data['name'],
-                    description=data['description'],
-                    rules=data['rules'],
-                    price=data['price'],
-                    delivery_time_hours=hours
-                )
-            
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin_account_maker"))
-            
-            bot.send_message(
-                message.chat.id,
-                f"✅ نوع اکانت با موفقیت اضافه شد!\n\n"
-                f"🆔 شناسه: {type_id}\n"
-                f"📦 نام: {data['name']}\n"
-                f"💰 قیمت: {data['price']:,.0f} تومان\n"
-                f"⏱ زمان تحویل: {hours} ساعت",
-                reply_markup=markup
-            )
-            
-            from bot import clear_state
-            clear_state(user_id)
-            return True
-        except ValueError:
-            bot.send_message(message.chat.id, "❌ لطفاً یک عدد صحیح وارد کنید!")
-            return True
-    
-    # دریافت ایمیل از کاربر
-    elif state.startswith("acc_waiting_email_"):
-        type_id = int(state.split("_")[-1])
-        user_data[user_id]['email'] = message.text
+    # دریافت ایمیل
+    if state == 'chatgpt_go_waiting_email':
+        email = message.text.strip()
+        order_id = user_data[user_id]['order_id']
+        
+        pending_orders[order_id]['email'] = email
+        pending_orders[order_id]['status'] = 'waiting_password'
         
         from bot import set_state
-        set_state(user_id, f"acc_waiting_password_{type_id}")
-        bot.send_message(
-            message.chat.id,
-            f"🔐 **مرحله 2 از 5: ارسال پسورد**\n\n"
-            f"لطفاً پسورد مورد نظر خود را ارسال کنید:\n\n"
-            f"⚠️ این پسورد برای ساخت اکانت شما استفاده می‌شود."
-        )
-        return True
-    
-    # دریافت پسورد از کاربر
-    elif state.startswith("acc_waiting_password_"):
-        type_id = int(state.split("_")[-1])
-        data = user_data[user_id]
-        email = data['email']
-        password = message.text
-        
-        # ایجاد سفارش با وضعیت "در انتظار تایید ادمین"
-        with db.get_connection() as conn:
-            order_id = AccountMakerDB.create_order(conn, user_id, type_id, email, password)
-            order = AccountMakerDB.get_order(conn, order_id)
-        
-        # پیام برای کاربر
-        text = (
-            f"✅ **اطلاعات شما ثبت شد!**\n\n"
-            f"📧 ایمیل: {email}\n"
-            f"🔐 پسورد: {password}\n\n"
-            f"⏳ درخواست شما در حال بررسی است.\n"
-            f"پس از تایید ادمین، به شما اطلاع داده خواهد شد.\n\n"
-        )
+        set_state(user_id, 'chatgpt_go_waiting_password')
         
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("🏠 منوی اصلی", callback_data="back_to_main"))
+        markup.add(types.InlineKeyboardButton("❌ لغو", callback_data='account_maker'))
         
-        bot.send_message(message.chat.id, text, reply_markup=markup)
+        bot.send_message(
+            message.chat.id,
+            f"""🔐 **مرحله 3 از 6: ارسال پسورد ایمیل**
+
+ایمیل دریافت شد: `{email}`
+
+حالا لطفاً پسورد ایمیل خود را ارسال کنید:""",
+            reply_markup=markup
+        )
+        return True
+    
+    # دریافت پسورد
+    elif state == 'chatgpt_go_waiting_password':
+        password = message.text.strip()
+        order_id = user_data[user_id]['order_id']
         
-        # اطلاع به ادمین برای تایید
-        handlers = AccountMakerHandlers(bot, db)
-        handlers.notify_admins_for_approval(order_id)
+        pending_orders[order_id]['password'] = password
+        pending_orders[order_id]['status'] = 'waiting_admin_approval'
+        
+        order_info = pending_orders[order_id]
+        
+        # پیام تایید برای کاربر
+        bot.send_message(
+            message.chat.id,
+            f"""⏳ **مرحله 4 از 6: منتظر تایید ادمین باشید**
+
+اطلاعات شما با موفقیت ثبت شد:
+• شناسه سفارش: `{order_id}`
+• ایمیل: `{order_info['email']}`
+
+⏰ لطفاً منتظر تایید ادمین باشید. این عملیات معمولاً کمتر از 1 ساعت طول می‌کشد.
+
+⚠️ اگر سفارش شما بیشتر از 1 ساعت تایید نشود، به صورت خودکار لغو خواهد شد."""
+        )
+        
+        # ارسال پیام به ادمین‌ها برای تایید
+        send_admin_approval_request(bot, order_id)
         
         from bot import clear_state
         clear_state(user_id)
         return True
-
     
-    # دریافت اطلاعات اکانت از ادمین برای تحویل
-    elif state.startswith("acc_admin_deliver_"):
-        order_id = int(state.split("_")[-1])
-        account_info = message.text
+    # دریافت اطلاعات اکانت از ادمین
+    elif state == 'admin_sending_account_info':
+        account_info = message.text.strip()
+        order_id = user_data[user_id]['admin_delivering_order']
         
-        with db.get_connection() as conn:
-            AccountMakerDB.update_order_status(
-                conn, order_id, 'delivered',
-                account_info=account_info,
-                delivered_at=datetime.now().isoformat()
-            )
+        if order_id not in pending_orders:
+            bot.send_message(message.chat.id, "❌ خطا: سفارش یافت نشد!")
+            from bot import clear_state
+            clear_state(user_id)
+            return True
         
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin_acc_pending_orders"))
+        order = pending_orders[order_id]
         
+        # ذخیره اطلاعات اکانت
+        order['account_info'] = account_info
+        order['status'] = 'delivered'
+        order['delivered_at'] = time.time()
+        
+        # ارسال اطلاعات به کاربر
+        customer_message = f"""🎉 **اکانت شما آماده است!**
+
+شناسه سفارش: `{order_id}`
+محصول: **{CHATGPT_GO_PRODUCT['name']}**
+
+📋 **اطلاعات اکانت:**
+{account_info}
+
+⚠️ **یادآوری قوانین:**
+• از VPN معتبر استفاده کنید
+• استفاده همزمان چند نفره ممکن است حساب را مسدود کند
+• پشتیبانی فقط در هفته اول و در صورت غیرفعال شدن حساب
+
+✅ از خرید شما متشکریم!"""
+        
+        bot.send_message(order['user_id'], customer_message)
+        
+        # تأیید برای ادمین
         bot.send_message(
             message.chat.id,
-            f"✅ سفارش #{order_id} با موفقیت تحویل داده شد!\n\nکاربر مطلع شد.",
-            reply_markup=markup
+            f"""✅ **اطلاعات با موفقیت ارسال شد!**
+
+شناسه سفارش: `{order_id}`
+کاربر: `{order['user_id']}`
+
+✅ سفارش تکمیل شد."""
         )
-        
-        # اطلاع به کاربر
-        handlers = AccountMakerHandlers(bot, db)
-        handlers.notify_user_delivered(order_id)
         
         from bot import clear_state
         clear_state(user_id)
         return True
     
     return False
- 
+
+# تابع کمکی برای ارسال درخواست تایید به ادمین
+def send_admin_approval_request(bot, order_id):
+    from config import config
+    
+    order = pending_orders[order_id]
+    
+    text = f"""🔔 **درخواست جدید: ChatGPT GO**
+
+📋 اطلاعات سفارش:
+• شناسه: `{order_id}`
+• نام کاربر: @{order.get('username', 'ناشناس')}
+• User ID: `{order['user_id']}`
+• محصول: {order['product']}
+• ایمیل: `{order['email']}`
+• پسورد: `{order['password']}`
+• قیمت: {CHATGPT_GO_PRODUCT['price']:,} تومان
+
+⏰ زمان ثبت: {time.strftime('%Y-%m-%d %H:%M', time.localtime(order['created_at']))}"""
+    
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.row(
+        types.InlineKeyboardButton("✅ تایید", callback_data=f'admin_acc_approve_{order_id}'),
+        types.InlineKeyboardButton("❌ رد", callback_data=f'admin_acc_reject_{order_id}')
+    )
+    
+    for admin_id in config.admin_list:
+        try:
+            bot.send_message(admin_id, text, reply_markup=markup)
+        except:
+            pass
