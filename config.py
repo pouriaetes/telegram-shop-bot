@@ -4,7 +4,7 @@ import os
 
 class Config(BaseSettings):
     bot_token: SecretStr
-    database_path: str = "bot_database.db"
+    database_path: str = "shop.db"
     proxy_url: str = ""
     admin_list: list[int] = []
     
@@ -21,3 +21,4 @@ class Config(BaseSettings):
         )
 
 config = Config.from_env()
+
