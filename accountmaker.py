@@ -1,8 +1,4 @@
-باشه! الان تمام فایل‌های کامل را برای Webhook آماده می‌کنم 🚀
 
-📁 فایل‌های کامل برای Webhook
-1. bot_webhook.py (فایل اصلی)
-python
 import telebot
 from telebot import types
 import logging
@@ -837,3 +833,4 @@ def send_admin_approval_request(bot, order_id):
         logger.info(f"✅ درخواست {order_id} به {success_count} ادمین ارسال شد")
     else:
         logger.error("❌ هیچ ادمینی پیام دریافت نکرد!")
+
