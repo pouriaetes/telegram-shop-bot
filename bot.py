@@ -1405,26 +1405,46 @@ def message_router(message):
         # اگر هندلر مربوط به فرم در فایل دیگری است آن را صدا بزنید
         # account_maker_handlers.handle_state(...) 
         pass
-# اجرای ربات
-if __name__ == "__main__":
+# ===== اجرای ربات =====
+if __name__ == '__main__':
+    logger.info("=" * 50)
+    logger.info("🤖 ربات در حال راه‌اندازی...")
+    logger.info("=" * 50)
+    
+    # بررسی اتصال به تلگرام
     try:
-        # شروع وب‌سرور برای health check
-        web_thread = threading.Thread(target=run_web_server, daemon=True)
-        web_thread.start()
-        logger.info("✅ Health check server started on port 8000")
-        
-        logger.info("="*60)
-        logger.info("🚀 ربات فروش اکانت در حال اجرا...")
-        logger.info("🔐 پروکسی فعال است")
-        logger.info("="*60)
-        
-        bot.infinity_polling(timeout=60, long_polling_timeout=60)
-    except KeyboardInterrupt:
-        logger.info("ربات متوقف شد")
+        bot_info = bot.get_me()
+        logger.info(f"✅ ربات متصل شد: @{bot_info.username}")
     except Exception as e:
-        logger.error(f"❌ خطا در اجرای ربات: {e}")
-
-
+        logger.error(f"❌ خطا در اتصال به تلگرام: {e}")
+        exit(1)
+    
+    # اجرای web server برای health check (برای Render)
+    if os.environ.get('RENDER') or os.environ.get('PORT'):
+        try:
+            webserver_thread = threading.Thread(target=run_webserver)
+            webserver_thread.daemon = True
+            webserver_thread.start()
+            logger.info("🌐 Web server برای health check راه‌اندازی شد")
+        except Exception as e:
+            logger.warning(f"⚠️ Web server راه‌اندازی نشد: {e}")
+    
+    # اجرای ربات
+    logger.info("🚀 ربات آماده دریافت پیام است!")
+    logger.info("=" * 50)
+    
+    try:
+        bot.infinity_polling(
+            timeout=60,
+            long_polling_timeout=60,
+            skip_pending=True
+        )
+    except KeyboardInterrupt:
+        logger.info("⏹ ربات توسط کاربر متوقف شد")
+    except Exception as e:
+        logger.error(f"❌ خطای غیرمنتظره: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 
