@@ -650,8 +650,10 @@ def handle_messages(message):
             bot.send_message(message.chat.id, "❌ لطفاً یک عدد معتبر وارد کنید!")
 
 # ===== اجرای ربات =====
+# ===== اجرای ربات =====
 if __name__ == '__main__':
     import time
+    import sys
     
     logger.info("=" * 50)
     logger.info("🤖 ربات در حال راه‌اندازی...")
@@ -661,49 +663,94 @@ if __name__ == '__main__':
         bot_info = bot.get_me()
         logger.info(f"✅ ربات متصل شد: @{bot_info.username}")
         
-        # حذف webhook
-        for attempt in range(3):
+        # بررسی و حذف webhook
+        webhook_info = bot.get_webhook_info()
+        logger.info(f"📊 وضعیت Webhook: URL={webhook_info.url}, Pending={webhook_info.pending_update_count}")
+        
+        if webhook_info.url:
+            logger.warning("⚠️ Webhook فعال است - در حال حذف...")
+            bot.remove_webhook()
+            time.sleep(2)
+        
+        # حذف webhook با چند بار تلاش
+        for attempt in range(5):
             try:
-                bot.delete_webhook(drop_pending_updates=True)
-                logger.info("✅ Webhook حذف شد - حالت polling فعال است")
-                time.sleep(2)
-                break
+                result = bot.delete_webhook(drop_pending_updates=True)
+                logger.info(f"✅ Webhook حذف شد (تلاش {attempt + 1}): {result}")
+                time.sleep(3)
+                
+                # بررسی مجدد
+                webhook_info = bot.get_webhook_info()
+                if not webhook_info.url:
+                    logger.info("✅ Webhook به طور کامل غیرفعال شد")
+                    break
+                    
             except Exception as e:
-                logger.warning(f"تلاش {attempt + 1} برای حذف webhook: {e}")
+                logger.warning(f"⚠️ تلاش {attempt + 1} برای حذف webhook: {e}")
                 time.sleep(3)
         
     except Exception as e:
         logger.error(f"❌ خطا در اتصال به تلگرام: {e}")
-        exit(1)
+        sys.exit(1)
     
     logger.info("🚀 ربات آماده دریافت پیام است!")
     logger.info("=" * 50)
+    
+    # متغیر برای شمارش خطاهای متوالی
+    error_count = 0
+    max_errors = 3
     
     # حلقه اجرا با retry
     while True:
         try:
             logger.info("⏳ شروع polling...")
+            
+            # اجرای بات
             bot.infinity_polling(
                 timeout=60,
                 long_polling_timeout=60,
-                skip_pending=True
+                skip_pending=True,
+                allowed_updates=['message', 'callback_query']
             )
+            
+            # ریست شمارنده خطا
+            error_count = 0
+            
         except KeyboardInterrupt:
             logger.info("⏹ ربات توسط کاربر متوقف شد")
             break
+            
         except Exception as e:
-            logger.error(f"❌ خطای غیرمنتظره: {e}")
+            error_count += 1
+            logger.error(f"❌ خطای غیرمنتظره ({error_count}/{max_errors}): {e}")
+            
+            # خطای 409 - Conflict
             if "409" in str(e) or "Conflict" in str(e):
-                logger.warning("⏳ صبر 10 ثانیه قبل از تلاش مجدد...")
-                time.sleep(10)
+                logger.warning("🚨 خطای Conflict - احتمالاً نسخه دیگری از بات در حال اجراست")
+                logger.warning("⏳ صبر 15 ثانیه...")
+                time.sleep(15)
+                
+                # تلاش برای حذف webhook
                 try:
                     bot.delete_webhook(drop_pending_updates=True)
                     logger.info("✅ Webhook دوباره حذف شد")
-                    time.sleep(3)
-                except:
-                    pass
+                    time.sleep(5)
+                except Exception as we:
+                    logger.error(f"❌ خطا در حذف webhook: {we}")
+                
+                # بررسی تعداد خطا
+                if error_count >= max_errors:
+                    logger.error("🚨 تعداد خطاهای متوالی زیاد است - خروج از برنامه")
+                    sys.exit(1)
+            
+            # سایر خطاها
             else:
                 import traceback
                 traceback.print_exc()
                 logger.warning("⏳ صبر 5 ثانیه قبل از تلاش مجدد...")
                 time.sleep(5)
+                
+                # بررسی تعداد خطا
+                if error_count >= max_errors:
+                    logger.error("🚨 تعداد خطاهای متوالی زیاد است - خروج از برنامه")
+                    sys.exit(1)
