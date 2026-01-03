@@ -636,6 +636,8 @@ def handle_messages(message):
 
 # ===== اجرای ربات =====
 if __name__ == '__main__':
+    import time
+    
     logger.info("=" * 50)
     logger.info("🤖 ربات در حال راه‌اندازی...")
     logger.info("=" * 50)
@@ -644,9 +646,16 @@ if __name__ == '__main__':
         bot_info = bot.get_me()
         logger.info(f"✅ ربات متصل شد: @{bot_info.username}")
         
-        # حذف webhook اگر فعال باشه
-        bot.delete_webhook(drop_pending_updates=True)
-        logger.info("✅ Webhook حذف شد - حالت polling فعال است")
+        # حذف webhook با چند بار تلاش
+        for attempt in range(3):
+            try:
+                bot.delete_webhook(drop_pending_updates=True)
+                logger.info("✅ Webhook حذف شد - حالت polling فعال است")
+                time.sleep(2)  # صبر 2 ثانیه
+                break
+            except Exception as e:
+                logger.warning(f"تلاش {attempt + 1} برای حذف webhook: {e}")
+                time.sleep(3)
         
     except Exception as e:
         logger.error(f"❌ خطا در اتصال به تلگرام: {e}")
@@ -665,16 +674,35 @@ if __name__ == '__main__':
     logger.info("🚀 ربات آماده دریافت پیام است!")
     logger.info("=" * 50)
     
-    try:
-        bot.infinity_polling(
-            timeout=60,
-            long_polling_timeout=60,
-            skip_pending=True
-        )
-    except KeyboardInterrupt:
-        logger.info("⏹ ربات توسط کاربر متوقف شد")
-    except Exception as e:
-        logger.error(f"❌ خطای غیرمنتظره: {e}")
-        import traceback
-        traceback.print_exc()
+    # حلقه اجرا با retry
+    while True:
+        try:
+            logger.info("⏳ شروع polling...")
+            bot.infinity_polling(
+                timeout=60,
+                long_polling_timeout=60,
+                skip_pending=True
+            )
+        except KeyboardInterrupt:
+            logger.info("⏹ ربات توسط کاربر متوقف شد")
+            break
+        except Exception as e:
+            logger.error(f"❌ خطای غیرمنتظره: {e}")
+            if "409" in str(e) or "Conflict" in str(e):
+                logger.warning("⏳ صبر 10 ثانیه قبل از تلاش مجدد...")
+                time.sleep(10)
+                
+                # حذف webhook دوباره
+                try:
+                    bot.delete_webhook(drop_pending_updates=True)
+                    logger.info("✅ Webhook دوباره حذف شد")
+                    time.sleep(3)
+                except:
+                    pass
+            else:
+                import traceback
+                traceback.print_exc()
+                logger.warning("⏳ صبر 5 ثانیه قبل از تلاش مجدد...")
+                time.sleep(5)
+
 
