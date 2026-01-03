@@ -4,9 +4,9 @@ from typing import Optional
 
 
 class Settings(BaseSettings):
-   BOT_TOKEN: SecretStr
-    ADMIN_IDS: str
-    DATABASE_PATH= "shop.db"
+    bot_token: SecretStr
+    admin_ids: str
+    database_path: str = "shop.db"
     proxy_url: Optional[str] = None
     
     # 👇 فیلدهای پرداخت - اضافه شد 👇
@@ -28,3 +28,4 @@ class Settings(BaseSettings):
 
 
 config = Settings()
+
