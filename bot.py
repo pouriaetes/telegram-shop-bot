@@ -8,9 +8,6 @@ from help import HelpHandlers, handle_help_states
 from payment_zibal import PaymentZibalHandlers, handle_payment_zibal_states
 from payment_digital import PaymentDigitalHandlers, handle_payment_digital_states
 from payment_admin import PaymentAdminHandlers, handle_payment_admin_states
-from flask import Flask
-import threading
-import os
 
 # تنظیم لاگینگ
 logging.basicConfig(
@@ -19,33 +16,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ایجاد Flask app برای health check
-app = Flask(__name__)
-
-@app.route('/')
-@app.route('/health')
-def health():
-    return 'Bot is running!', 200
-
-def run_webserver():
-    """اجرای وب‌سرور در thread جداگانه"""
-    port = int(os.environ.get('PORT', 8000))
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-
-# ایجاد بات با timeout بالاتر
+# ایجاد بات
 bot = telebot.TeleBot(
     config.bot_token.get_secret_value(),
     parse_mode='Markdown',
     threaded=False
 )
 
-# تنظیم پروکسی و timeout
-try:
-    telebot.apihelper.proxy = {'https': config.proxy_url}
-    telebot.apihelper.CONNECT_TIMEOUT = 30
-    telebot.apihelper.READ_TIMEOUT = 60
-except:
-    pass
+# تنظیم timeout
+telebot.apihelper.CONNECT_TIMEOUT = 30
+telebot.apihelper.READ_TIMEOUT = 60
 
 # ایجاد دیتابیس
 db = Database(config.database_path)
@@ -398,6 +378,84 @@ def show_admin_menu(call):
         reply_markup=markup
     )
 
+@bot.callback_query_handler(func=lambda call: call.data == "admin_add_product")
+def admin_add_product_start(call):
+    """شروع افزودن محصول"""
+    if not is_admin(call.from_user.id):
+        return
+    
+    set_state(call.from_user.id, "waiting_site_name")
+    user_data[call.from_user.id] = {}
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("❌ لغو", callback_data="admin_menu"))
+    
+    bot.send_message(
+        call.message.chat.id,
+        "➕ **افزودن محصول جدید**\n\n📝 نام سایت را وارد کنید:",
+        reply_markup=markup
+    )
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+
+@bot.callback_query_handler(func=lambda call: call.data == "admin_add_account")
+def admin_add_account_start(call):
+    """شروع افزودن اکانت"""
+    if not is_admin(call.from_user.id):
+        return
+    
+    products = db.get_all_products()
+    
+    if not products:
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin_menu"))
+        
+        bot.send_message(
+            call.message.chat.id,
+            "❌ هیچ محصولی یافت نشد. ابتدا محصول اضافه کنید.",
+            reply_markup=markup
+        )
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        return
+    
+    products_text = "\n".join([
+        f"🆔 `{p['id']}` - {p['site_name']} (موجودی: {p['stock_count']})"
+        for p in products
+    ])
+    
+    set_state(call.from_user.id, "waiting_product_id")
+    user_data[call.from_user.id] = {}
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("❌ لغو", callback_data="admin_menu"))
+    
+    bot.send_message(
+        call.message.chat.id,
+        f"📦 **افزودن اکانت**\n\n"
+        f"محصولات موجود:\n{products_text}\n\n"
+        f"🆔 شناسه محصول را وارد کنید:",
+        reply_markup=markup
+    )
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+
+@bot.callback_query_handler(func=lambda call: call.data == "admin_add_balance")
+def admin_add_balance_start(call):
+    """شروع افزایش موجودی"""
+    if not is_admin(call.from_user.id):
+        return
+    
+    set_state(call.from_user.id, "waiting_user_id_balance")
+    user_data[call.from_user.id] = {}
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("❌ لغو", callback_data="admin_menu"))
+    
+    bot.send_message(
+        call.message.chat.id,
+        "💰 **افزایش موجودی کاربر**\n\n🆔 ID تلگرام کاربر را وارد کنید:",
+        reply_markup=markup
+    )
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+
 @bot.callback_query_handler(func=lambda call: call.data == "admin_statistics")
 def show_statistics(call):
     """آمار فروش"""
@@ -459,48 +517,8 @@ def handle_messages(message):
     if handle_payment_admin_states(bot, db, message, user_id, state, user_data):
         return
     
-    # فرآیند خرید با فرم
-    if state.startswith("waiting_form_answer_"):
-        product_id = int(state.split("_")[-1])
-        data = user_data[user_id]
-        
-        current_index = data['current_field_index']
-        current_field = data['form_fields'][current_index]
-        
-        # ذخیره جواب
-        data['form_answers'][current_field['field_label']] = message.text
-        
-        # بررسی فیلد بعدی
-        if current_index + 1 < len(data['form_fields']):
-            data['current_field_index'] += 1
-            next_field = data['form_fields'][data['current_field_index']]
-            
-            progress = f"({data['current_field_index'] + 1}/{len(data['form_fields'])})"
-            
-            bot.send_message(
-                message.chat.id,
-                f"📝 {progress} ❓ {next_field['field_label']}:"
-            )
-        else:
-            # تمام سوالات پاسخ داده شد
-            summary = f"📝 **خلاصه اطلاعات شما:**\n\n"
-            for key, value in data['form_answers'].items():
-                summary += f"• {key}: {value}\n"
-            
-            product = db.get_product_by_id(product_id)
-            summary += f"\n💰 مبلغ قابل پرداخت: {product['price']:,.0f} تومان"
-            
-            markup = types.InlineKeyboardMarkup()
-            markup.add(
-                types.InlineKeyboardButton("✅ تایید و پرداخت", callback_data=f"confirm_purchase_{product_id}"),
-                types.InlineKeyboardButton("❌ لغو", callback_data="products_list")
-            )
-            
-            bot.send_message(message.chat.id, summary, reply_markup=markup)
-            clear_state(user_id)
-    
     # افزودن محصول
-    elif state == "waiting_site_name":
+    if state == "waiting_site_name":
         user_data[user_id]['site_name'] = message.text
         set_state(user_id, "waiting_description")
         bot.send_message(message.chat.id, "📝 توضیحات محصول را وارد کنید:")
@@ -631,9 +649,6 @@ def handle_messages(message):
         except ValueError:
             bot.send_message(message.chat.id, "❌ لطفاً یک عدد معتبر وارد کنید!")
 
-
-
-
 # ===== اجرای ربات =====
 if __name__ == '__main__':
     import time
@@ -646,12 +661,12 @@ if __name__ == '__main__':
         bot_info = bot.get_me()
         logger.info(f"✅ ربات متصل شد: @{bot_info.username}")
         
-        # حذف webhook با چند بار تلاش
+        # حذف webhook
         for attempt in range(3):
             try:
                 bot.delete_webhook(drop_pending_updates=True)
                 logger.info("✅ Webhook حذف شد - حالت polling فعال است")
-                time.sleep(2)  # صبر 2 ثانیه
+                time.sleep(2)
                 break
             except Exception as e:
                 logger.warning(f"تلاش {attempt + 1} برای حذف webhook: {e}")
@@ -660,16 +675,6 @@ if __name__ == '__main__':
     except Exception as e:
         logger.error(f"❌ خطا در اتصال به تلگرام: {e}")
         exit(1)
-    
-    # اجرای web server برای health check
-    if os.environ.get('RENDER') or os.environ.get('PORT'):
-        try:
-            webserver_thread = threading.Thread(target=run_webserver)
-            webserver_thread.daemon = True
-            webserver_thread.start()
-            logger.info("🌐 Web server برای health check راه‌اندازی شد")
-        except Exception as e:
-            logger.warning(f"⚠️ Web server راه‌اندازی نشد: {e}")
     
     logger.info("🚀 ربات آماده دریافت پیام است!")
     logger.info("=" * 50)
@@ -691,8 +696,6 @@ if __name__ == '__main__':
             if "409" in str(e) or "Conflict" in str(e):
                 logger.warning("⏳ صبر 10 ثانیه قبل از تلاش مجدد...")
                 time.sleep(10)
-                
-                # حذف webhook دوباره
                 try:
                     bot.delete_webhook(drop_pending_updates=True)
                     logger.info("✅ Webhook دوباره حذف شد")
@@ -704,5 +707,3 @@ if __name__ == '__main__':
                 traceback.print_exc()
                 logger.warning("⏳ صبر 5 ثانیه قبل از تلاش مجدد...")
                 time.sleep(5)
-
-
